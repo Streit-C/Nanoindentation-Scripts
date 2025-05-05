@@ -39,8 +39,54 @@ def write_empty_indents_log(empty_indents, log_path):
                 f.write(path + "\n")
     print(f"\nEmpty indent log written to: {log_path}")
 
-def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt"):
-    """Process all nanoindentation data and save averaged results and empty indent log."""
+def remove_outliers(data_arrays, threshold=3.0):
+    """
+    Remove outlier curves using z-score thresholding across depth points.
+    
+    Args:
+        data_arrays (list): List of numpy arrays containing individual curves
+        threshold (float): Z-score threshold for outlier removal (default: 3.0)
+    
+    Returns:
+        tuple: (filtered_data, outlier_mask) where:
+            filtered_data - list of non-outlier curves
+            outlier_mask - boolean mask indicating removed outliers
+    """
+    data_stack = np.array(data_arrays)
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        mean_curve = np.nanmean(data_stack, axis=0)
+        std_curve = np.nanstd(data_stack, axis=0, ddof=1)  # Use ddof=1 for sample std
+
+    # Handle all-NaN slices
+    valid_mask = ~np.isnan(mean_curve) & ~np.isnan(std_curve)
+    z_scores = np.zeros_like(data_stack)
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        z_scores[:, valid_mask] = np.abs(
+            (data_stack[:, valid_mask] - mean_curve[valid_mask]) 
+            / std_curve[valid_mask]
+        )
+
+    outlier_mask = np.any(z_scores > threshold, axis=1)
+    filtered_data = [arr for arr, is_outlier in zip(data_arrays, outlier_mask) 
+                    if not is_outlier]
+    
+    return filtered_data, outlier_mask
+
+def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
+    """
+    Process all nanoindentation data with optional outlier removal.
+    
+    Args:
+        root_dir (str): Root directory containing data files
+        output_dir (str): Output directory for processed data (default: 'Processed_Data')
+        log_empty_path (str): Path for logging empty indents (default: 'empty_indents_log.txt')
+        remove_outliers_flag (bool): Enable outlier removal (default: False)
+        outlier_threshold (float): Z-score threshold for outlier detection (default: 3.0)
+    """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     empty_indents = []
 
@@ -84,6 +130,7 @@ def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empt
                 modulus_arrays = []
                 valid_count = 0
 
+                # Collect all curves for current location
                 for fname in os.listdir(row_path):
                     if fname.upper().endswith('.CSV') and fname.startswith(f'RT_{film}_{column}{row}_'):
                         file_path = os.path.join(row_path, fname)
@@ -97,7 +144,6 @@ def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empt
                                 common_depth, df['DEPTH'], df['MODULUS'],
                                 left=np.nan, right=np.nan
                             )
-                            # Only count as valid if at least one finite value
                             if np.isfinite(h_interp).any() and np.isfinite(m_interp).any():
                                 hardness_arrays.append(h_interp)
                                 modulus_arrays.append(m_interp)
@@ -107,29 +153,40 @@ def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empt
                         else:
                             empty_indents.append(file_path)
 
+                # Outlier removal step
+                if remove_outliers_flag and valid_count > 0:
+                    hardness_arrays, h_outliers = remove_outliers(hardness_arrays, outlier_threshold)
+                    modulus_arrays, m_outliers = remove_outliers(modulus_arrays, outlier_threshold)
                     
+                    # Update valid count after outlier removal
+                    valid_count = len(hardness_arrays)
+                    print(f"[Outliers removed: {sum(h_outliers)} hardness, {sum(m_outliers)} modulus] ", end='')
+
+                # Averaging and processing
                 if valid_count > 0:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=RuntimeWarning)
                         hardness_stack = np.array(hardness_arrays)
                         modulus_stack = np.array(modulus_arrays)
+                        
+                        # Check for valid data after outlier removal
+                        if len(hardness_arrays) == 0 or len(modulus_arrays) == 0:
+                            print(" [SKIPPED] All data removed as outliers")
+                            continue
         
-                        # Require at least 75% of indents to have valid data at each depth
                         min_valid = max(2, int(0.75 * len(hardness_arrays)))
         
-                        # Count valid (non-NaN) values at each depth point
                         valid_hardness = np.sum(~np.isnan(hardness_stack), axis=0)
                         valid_modulus = np.sum(~np.isnan(modulus_stack), axis=0)
         
-                        # Only average where enough indents have valid data
                         hardness_avg = np.where(valid_hardness >= min_valid, 
-                               np.nanmean(hardness_stack, axis=0), np.nan)
+                                       np.nanmean(hardness_stack, axis=0), np.nan)
                         modulus_avg = np.where(valid_modulus >= min_valid, 
-                              np.nanmean(modulus_stack, axis=0), np.nan)
+                                      np.nanmean(modulus_stack, axis=0), np.nan)
                         std_hardness = np.where(valid_hardness >= min_valid, 
-                               np.nanstd(hardness_stack, axis=0), np.nan)
+                                       np.nanstd(hardness_stack, axis=0), np.nan)
                         std_modulus = np.where(valid_modulus >= min_valid, 
-                              np.nanstd(modulus_stack, axis=0), np.nan)
+                                      np.nanstd(modulus_stack, axis=0), np.nan)
         
                     print(f" [SAVED] {valid_count} indents")
                 else:
@@ -139,7 +196,7 @@ def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empt
                     std_hardness = np.full_like(common_depth, np.nan)
                     std_modulus = np.full_like(common_depth, np.nan)
 
-                # Save result CSV for every location (even if empty, for completeness)
+                # Save results
                 result_df = pd.DataFrame({
                     'DEPTH': common_depth,
                     'HARDNESS_AVG': hardness_avg,
