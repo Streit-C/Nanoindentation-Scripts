@@ -11,6 +11,9 @@ import numpy as np
 import warnings
 from pathlib import Path
 
+sections = ['I','II','III','IV']
+columns = ['A','B','C','D']
+
 def load_and_validate(file_path):
     """Load and validate a nanoindentation CSV file."""
     try:
@@ -289,3 +292,141 @@ def calculate_film_averages(processed_data_dir, output_file="film_mechanical_pro
     else:
         print("No valid results to save")
         return None
+
+def load_and_validate_stress_strain(file_path):
+    """Load and validate a nanoindentation CSV file."""
+    try:
+        df = pd.read_csv(file_path)
+        df.columns = [col.upper().strip() for col in df.columns]
+
+        if not {'STRAIN', 'STRESS'}.issubset(df.columns):
+            raise ValueError("Missing required columns: 'Strain' and/or 'Stress'")
+
+        df = df[['STRAIN', 'STRESS']].apply(pd.to_numeric, errors='coerce')
+        df = df[
+            (df['STRAIN'].notna()) &
+            (df['STRESS'].notna()) &
+            (df['STRESS'] > 0) &
+            (df['STRAIN'] > 0)
+        ]
+        return df.sort_values('STRAIN').reset_index(drop=True) if not df.empty else None
+    except Exception as e:
+        print(f"  [ERROR] Skipping {os.path.basename(file_path)}: {str(e)}")
+        return None
+
+def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
+    """
+    Process all nanoindentation data with optional outlier removal.
+    
+    Args:
+        root_dir (str): Root directory containing data files
+        output_dir (str): Output directory for processed data (default: 'Processed_Data')
+        log_empty_path (str): Path for logging empty indents (default: 'empty_indents_log.txt')
+        remove_outliers_flag (bool): Enable outlier removal (default: False)
+        outlier_threshold (float): Z-score threshold for outlier detection (default: 3.0)
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    empty_indents = []
+
+    # First pass: determine global strain range
+    print("Scanning files to determine strain range...")
+    all_strains = []
+    for root, _, files in os.walk(root_dir):
+        for fname in files:
+            if fname.upper().endswith('.CSV'):
+                df = load_and_validate_stress_strain(os.path.join(root, fname))
+                if df is not None:
+                    all_strains.extend(df['STRAIN'].values)
+    if not all_strains:
+        print("No valid strain data found in any files.")
+        write_empty_indents_log(empty_indents, log_empty_path)
+        return
+
+    global_min, global_max = np.min(all_strains), np.max(all_strains)
+    common_strain = np.linspace(global_min, global_max, 8000)
+    print(f"Global strain range: {global_min:.2f}-{global_max:.2f}%")
+
+    # Second pass: process and save data
+    for film in sections:
+        film_path = os.path.join(root_dir, film)
+        if not os.path.exists(film_path):
+            continue
+
+        print(f"\n{'='*40}\nPROCESSING FILM {film}\n{'='*40}")
+        for column in columns:
+            col_path = os.path.join(film_path, column)
+            if not os.path.exists(col_path):
+                continue
+
+            for row in range(1, 30):
+                row_path = os.path.join(col_path, str(row))
+                if not os.path.exists(row_path):
+                    continue
+
+                print(f"|-- Processing {film}_{column}{row} ", end='')
+                stress_arrays = []
+                valid_count = 0
+
+                # Collect all curves for current location
+                for fname in os.listdir(row_path):
+                    if fname.upper().endswith('.CSV') and fname.startswith(f'RT_{film}_{column}{row}_'):
+                        file_path = os.path.join(row_path, fname)
+                        df = load_and_validate_stress_strain(file_path)
+                        if df is not None:
+                            s_interp = np.interp(
+                                common_strain, df['STRAIN'], df['STRESS'],
+                                left=np.nan, right=np.nan
+                            )
+                            if np.isfinite(s_interp).any():
+                                stress_arrays.append(s_interp)
+                                valid_count += 1
+                            else:
+                                empty_indents.append(file_path)
+                        else:
+                            empty_indents.append(file_path)
+
+                # Outlier removal step
+                if remove_outliers_flag and valid_count > 0:
+                    stress_arrays, s_outliers = remove_outliers(stress_arrays, outlier_threshold)
+                    
+                    # Update valid count after outlier removal
+                    valid_count = len(stress_arrays)
+                    print(f"[Outliers removed: {sum(s_outliers)} stress] ", end='')
+
+                # Averaging and processing
+                if valid_count > 0:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=RuntimeWarning)
+                        stress_stack = np.array(stress_arrays)
+                        
+                        # Check for valid data after outlier removal
+                        if len(stress_arrays) == 0:
+                            print(" [SKIPPED] All data removed as outliers")
+                            continue
+        
+                        min_valid = max(2, int(0.75 * len(stress_arrays)))
+        
+                        valid_stress = np.sum(~np.isnan(stress_stack), axis=0)
+        
+                        stress_avg = np.where(valid_stress >= min_valid, 
+                                       np.nanmean(stress_stack, axis=0), np.nan)
+                        std_stress = np.where(valid_stress >= min_valid, 
+                                       np.nanstd(stress_stack, axis=0), np.nan)
+        
+                    print(f" [SAVED] {valid_count} indents")
+                else:
+                    print(" [SKIPPED] No valid data")
+                    stress_avg = np.full_like(common_strain, np.nan)
+                    std_stress = np.full_like(common_strain, np.nan)
+
+                # Save results
+                result_df = pd.DataFrame({
+                    'STRAIN': common_strain,
+                    'STRESS_AVG': stress_avg,
+                    'STD_STRESS': std_stress,
+                }).dropna(subset=['STRESS_AVG'], how='all')
+
+                output_file = os.path.join(output_dir, f"{film}_{column}{int(row):02d}_averaged.csv")
+                result_df.to_csv(output_file, index=False)
+
+    write_empty_indents_log(empty_indents, log_empty_path)
