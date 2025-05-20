@@ -213,8 +213,7 @@ def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empt
 
     write_empty_indents_log(empty_indents, log_empty_path)
     
-def calculate_film_averages(processed_data_dir, output_file="film_mechanical_properties.csv", 
-                           depth_range=(500, 1500)):
+def calculate_film_averages(processed_data_dir, output_file="film_mechanical_properties.csv", depth_range=(500, 1500)):
     """
     Calculate average hardness and modulus values for each film from processed CSV files.
     Each CSV in the processed folder is treated as a separate film.
@@ -228,9 +227,6 @@ def calculate_film_averages(processed_data_dir, output_file="film_mechanical_pro
     depth_range : tuple
         Depth range (min, max) in nm to use for averaging (stable region)
     """
-    import os
-    import pandas as pd
-    import numpy as np
     
     # Initialize results dictionary
     results = {
@@ -314,37 +310,48 @@ def load_and_validate_stress_strain(file_path):
         print(f"  [ERROR] Skipping {os.path.basename(file_path)}: {str(e)}")
         return None
 
-def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
+def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0, max_strain=None):
     """
-    Process all nanoindentation data with optional outlier removal.
-    
+    Process all nanoindentation data with optional outlier removal and strain cutoff.
+
     Args:
         root_dir (str): Root directory containing data files
         output_dir (str): Output directory for processed data (default: 'Processed_Data')
         log_empty_path (str): Path for logging empty indents (default: 'empty_indents_log.txt')
         remove_outliers_flag (bool): Enable outlier removal (default: False)
         outlier_threshold (float): Z-score threshold for outlier detection (default: 3.0)
+        max_strain (float, optional): Maximum allowed strain. Data above this will be ignored. (default: None)
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     empty_indents = []
 
-    # First pass: determine global strain range
+    # First pass: determine global strain range (do NOT trim by max_strain here)
     print("Scanning files to determine strain range...")
     all_strains = []
     for root, _, files in os.walk(root_dir):
         for fname in files:
             if fname.upper().endswith('.CSV'):
-                df = load_and_validate_stress_strain(os.path.join(root, fname))
-                if df is not None:
+                file_path = os.path.join(root, fname)
+                df = load_and_validate_stress_strain(file_path)
+                if df is not None and not df.empty:
+                    # Zero this curve
+                    initial_strain = df['STRAIN'].iloc[0]
+                    initial_stress = df['STRESS'].iloc[0]
+                    df['STRAIN'] = df['STRAIN'] - initial_strain
+                    df['STRESS'] = df['STRESS'] - initial_stress
                     all_strains.extend(df['STRAIN'].values)
+                else:
+                    empty_indents.append(file_path)
+
     if not all_strains:
         print("No valid strain data found in any files.")
         write_empty_indents_log(empty_indents, log_empty_path)
         return
 
-    global_min, global_max = np.min(all_strains), np.max(all_strains)
+    global_min = 0  # All curves start at 0 after zeroing
+    global_max = np.max(all_strains)
     common_strain = np.linspace(global_min, global_max, 8000)
-    print(f"Global strain range: {global_min:.2f}-{global_max:.2f}%")
+    print(f"Global strain range: 0.00-{global_max:.2f}%")
 
     # Second pass: process and save data
     for film in sections:
@@ -372,7 +379,16 @@ def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_
                     if fname.upper().endswith('.CSV') and fname.startswith(f'RT_{film}_{column}{row}_'):
                         file_path = os.path.join(row_path, fname)
                         df = load_and_validate_stress_strain(file_path)
-                        if df is not None:
+                        if df is not None and not df.empty:
+                            # Zero this curve
+                            initial_strain = df['STRAIN'].iloc[0]
+                            initial_stress = df['STRESS'].iloc[0]
+                            df['STRAIN'] = df['STRAIN'] - initial_strain
+                            df['STRESS'] = df['STRESS'] - initial_stress
+                            # Do NOT trim by max_strain here
+                            if df.empty:
+                                empty_indents.append(file_path)
+                                continue
                             s_interp = np.interp(
                                 common_strain, df['STRAIN'], df['STRESS'],
                                 left=np.nan, right=np.nan
@@ -388,8 +404,6 @@ def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_
                 # Outlier removal step
                 if remove_outliers_flag and valid_count > 0:
                     stress_arrays, s_outliers = remove_outliers(stress_arrays, outlier_threshold)
-                    
-                    # Update valid count after outlier removal
                     valid_count = len(stress_arrays)
                     print(f"[Outliers removed: {sum(s_outliers)} stress] ", end='')
 
@@ -398,32 +412,53 @@ def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=RuntimeWarning)
                         stress_stack = np.array(stress_arrays)
-                        
-                        # Check for valid data after outlier removal
                         if len(stress_arrays) == 0:
                             print(" [SKIPPED] All data removed as outliers")
                             continue
-        
+
                         min_valid = max(2, int(0.75 * len(stress_arrays)))
-        
                         valid_stress = np.sum(~np.isnan(stress_stack), axis=0)
-        
                         stress_avg = np.where(valid_stress >= min_valid, 
                                        np.nanmean(stress_stack, axis=0), np.nan)
                         std_stress = np.where(valid_stress >= min_valid, 
                                        np.nanstd(stress_stack, axis=0), np.nan)
-        
+
                     print(f" [SAVED] {valid_count} indents")
                 else:
                     print(" [SKIPPED] No valid data")
                     stress_avg = np.full_like(common_strain, np.nan)
                     std_stress = np.full_like(common_strain, np.nan)
 
+                # --- Chop off fluctuating high-strain end (last 5% of valid data) ---
+                chop_fraction = 0.05
+
+                valid_indices = np.where(~np.isnan(stress_avg))[0]
+                if len(valid_indices) == 0:
+                    common_strain_chopped = np.array([])
+                    stress_avg_chopped = np.array([])
+                    std_stress_chopped = np.array([])
+                else:
+                    last_valid_idx = valid_indices[-1]
+                    chop_idx = int(last_valid_idx * (1 - chop_fraction))
+                    if chop_idx < 1:
+                        chop_idx = 1
+
+                    common_strain_chopped = common_strain[:chop_idx]
+                    stress_avg_chopped = stress_avg[:chop_idx]
+                    std_stress_chopped = std_stress[:chop_idx]
+
+                # --- Now trim by max_strain (AFTER chopping) ---
+                if max_strain is not None:
+                    mask = common_strain_chopped <= max_strain
+                    common_strain_chopped = common_strain_chopped[mask]
+                    stress_avg_chopped = stress_avg_chopped[mask]
+                    std_stress_chopped = std_stress_chopped[mask]
+
                 # Save results
                 result_df = pd.DataFrame({
-                    'STRAIN': common_strain,
-                    'STRESS_AVG': stress_avg,
-                    'STD_STRESS': std_stress,
+                    'STRAIN': common_strain_chopped,
+                    'STRESS_AVG': stress_avg_chopped,
+                    'STD_STRESS': std_stress_chopped,
                 }).dropna(subset=['STRESS_AVG'], how='all')
 
                 output_file = os.path.join(output_dir, f"{film}_{column}{int(row):02d}_averaged.csv")
