@@ -9,7 +9,7 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
+    
 def plot_all_curves(processed_data_dir, plot_hardness=True, plot_modulus=True):
     """
     Plot all processed curves (HARDNESS_AVG and/or MODULUS_AVG) from every *_averaged.csv
@@ -33,6 +33,28 @@ def plot_all_curves(processed_data_dir, plot_hardness=True, plot_modulus=True):
         title += ' (Hardness Only)'
     elif plot_modulus and not plot_hardness:
         title += ' (Modulus Only)'
+    plt.title(title)
+    plt.legend(fontsize=8, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout(rect=[0, 0, 0.8, 1])
+    plt.show()
+    
+def plot_all_curves_stress_strain(processed_data_dir):
+    """
+    Plot all processed curves (STRAIN_AVG) from every *_averaged.csv
+    in the processed data directory and its subdirectories.
+    """
+    plt.figure(figsize=(12, 7))
+    for root, _, files in os.walk(processed_data_dir):
+        for fname in files:
+            if fname.endswith('_averaged.csv'):
+                fpath = os.path.join(root, fname)
+                df = pd.read_csv(fpath)
+                label = os.path.splitext(fname)[0].replace('_averaged', '')
+                if 'STRESS_AVG' in df.columns:
+                    plt.plot(df['STRAIN'], df['STRESS_AVG'], label=f'{label} Stress')
+    plt.xlabel('Strain (%)')
+    plt.ylabel('Stress (MPa)')
+    title = 'All Averaged Nanoindentation Curves'
     plt.title(title)
     plt.legend(fontsize=8, bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout(rect=[0, 0, 0.8, 1])
@@ -128,10 +150,10 @@ def plot_all_single_curves(root_dir, film, column, row,
     plt.tight_layout()
     plt.show()
 
-def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True, plot_modulus=True):
+def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True, plot_modulus=True, plot_stress=False):
     """
-    Plot a single processed curve (choose hardness, modulus, or both).
-    Example: plot_single_curve('Processed_Data', 'III', 'A', 2, plot_hardness=True, plot_modulus=False)
+    Plot a single processed curve (choose hardness, modulus, stress, or any combination).
+    Example: plot_single_curve('Processed_Data', 'III', 'A', 2, plot_hardness=True, plot_modulus=False, plot_stress=True)
     """
     formatted_row = f"{int(row):02d}"
     fname = f"{film}_{column}{formatted_row}_averaged.csv"
@@ -140,95 +162,114 @@ def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True,
         if fname in files:
             fpath = os.path.join(root, fname)
             df = pd.read_csv(fpath)
-            plt.figure(figsize=(10, 6))
             
-            if plot_hardness and plot_modulus:
-                # Create dual axis plot
-                ax1 = plt.gca()
-                ax2 = ax1.twinx()
-                plotted_hardness = False
-                plotted_modulus = False
-
-                # Plot hardness on left axis
-                if 'HARDNESS_AVG' in df.columns:
-                    ax1.plot(df['DEPTH'], df['HARDNESS_AVG'], 
-                            label='Hardness Avg', color='tab:blue')
-                    if 'STD_HARDNESS' in df.columns:
-                        ax1.fill_between(df['DEPTH'],
-                                        df['HARDNESS_AVG'] - df['STD_HARDNESS'],
-                                        df['HARDNESS_AVG'] + df['STD_HARDNESS'],
-                                        color='tab:blue', alpha=0.15, 
-                                        label='Hardness Std')
-                    plotted_hardness = True
-                
-                # Plot modulus on right axis
-                if 'MODULUS_AVG' in df.columns:
-                    ax2.plot(df['DEPTH'], df['MODULUS_AVG'], 
-                            label='Modulus Avg', color='tab:orange')
-                    if 'STD_MODULUS' in df.columns:
-                        ax2.fill_between(df['DEPTH'],
-                                        df['MODULUS_AVG'] - df['STD_MODULUS'],
-                                        df['MODULUS_AVG'] + df['STD_MODULUS'],
-                                        color='tab:orange', alpha=0.15, 
-                                        label='Modulus Std')
-                    plotted_modulus = True
-
-                # Configure axes
-                ax1.set_xlabel('Depth (nm)')
-                ax1.set_ylabel('Hardness (GPa)', color='tab:blue')
-                ax2.set_ylabel('Modulus (GPa)', color='tab:orange')
-                ax1.tick_params(axis='y', labelcolor='tab:blue')
-                ax2.tick_params(axis='y', labelcolor='tab:orange')
-
-                # Combine legends
-                lines, labels = [], []
-                if plotted_hardness:
-                    l1, lab1 = ax1.get_legend_handles_labels()
-                    lines += l1
-                    labels += lab1
-                if plotted_modulus:
-                    l2, lab2 = ax2.get_legend_handles_labels()
-                    lines += l2
-                    labels += lab2
-                if lines:
-                    ax1.legend(lines, labels, loc='upper left')
-
-            else:
-                # Single axis plot
-                if plot_hardness and 'HARDNESS_AVG' in df.columns:
-                    plt.plot(df['DEPTH'], df['HARDNESS_AVG'], 
-                            label='Hardness Avg', color='tab:blue')
-                    if 'STD_HARDNESS' in df.columns:
-                        plt.fill_between(df['DEPTH'],
-                                        df['HARDNESS_AVG'] - df['STD_HARDNESS'],
-                                        df['HARDNESS_AVG'] + df['STD_HARDNESS'],
-                                        color='tab:blue', alpha=0.15, 
-                                        label='Hardness Std')
-                
-                if plot_modulus and 'MODULUS_AVG' in df.columns:
-                    plt.plot(df['DEPTH'], df['MODULUS_AVG'], 
-                            label='Modulus Avg', color='tab:orange')
-                    if 'STD_MODULUS' in df.columns:
-                        plt.fill_between(df['DEPTH'],
-                                        df['MODULUS_AVG'] - df['STD_MODULUS'],
-                                        df['MODULUS_AVG'] + df['STD_MODULUS'],
-                                        color='tab:orange', alpha=0.15, 
-                                        label='Modulus Std')
-                
-                plt.xlabel('Depth (nm)')
-                plt.ylabel('Value (GPa)')
+            # --- Stress-Strain Plot ---
+            if plot_stress and 'STRAIN' in df.columns and 'STRESS_AVG' in df.columns:
+                plt.figure(figsize=(10, 6))
+                plt.plot(df['STRAIN'], df['STRESS_AVG'], color='tab:red', label='Stress Avg')
+                if 'STD_STRESS' in df.columns:
+                    plt.fill_between(
+                        df['STRAIN'],
+                        df['STRESS_AVG'] - df['STD_STRESS'],
+                        df['STRESS_AVG'] + df['STD_STRESS'],
+                        color='tab:red', alpha=0.18, label='Stress Std'
+                    )
+                plt.xlabel('Strain (%)')
+                plt.ylabel('Stress (GPa)')
+                plt.title(f"Averaged Stress-Strain Curve: {film}_{column}{formatted_row}")
                 plt.legend()
+                plt.grid(True)
+                plt.xlim(left=0)
+                plt.ylim(bottom=0)
+                plt.tight_layout()
+                plt.show()
+                # Return here if you want to plot only stress-strain when plot_stress is True
+                # return
 
-            title = f"Averaged Nanoindentation Curve: {film}_{column}{formatted_row}"
-            if plot_hardness and not plot_modulus:
-                title += " (Hardness Only)"
-            elif plot_modulus and not plot_hardness:
-                title += " (Modulus Only)"
-                
-            plt.title(title)
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
+            # --- Hardness/Modulus Plot ---
+            if plot_hardness or plot_modulus:
+                plt.figure(figsize=(10, 6))
+                if plot_hardness and plot_modulus:
+                    ax1 = plt.gca()
+                    ax2 = ax1.twinx()
+                    plotted_hardness = False
+                    plotted_modulus = False
+
+                    if 'HARDNESS_AVG' in df.columns:
+                        ax1.plot(df['DEPTH'], df['HARDNESS_AVG'], label='Hardness Avg', color='tab:blue')
+                        if 'STD_HARDNESS' in df.columns:
+                            ax1.fill_between(
+                                df['DEPTH'],
+                                df['HARDNESS_AVG'] - df['STD_HARDNESS'],
+                                df['HARDNESS_AVG'] + df['STD_HARDNESS'],
+                                color='tab:blue', alpha=0.15, label='Hardness Std'
+                            )
+                        plotted_hardness = True
+
+                    if 'MODULUS_AVG' in df.columns:
+                        ax2.plot(df['DEPTH'], df['MODULUS_AVG'], label='Modulus Avg', color='tab:orange')
+                        if 'STD_MODULUS' in df.columns:
+                            ax2.fill_between(
+                                df['DEPTH'],
+                                df['MODULUS_AVG'] - df['STD_MODULUS'],
+                                df['MODULUS_AVG'] + df['STD_MODULUS'],
+                                color='tab:orange', alpha=0.15, label='Modulus Std'
+                            )
+                        plotted_modulus = True
+
+                    ax1.set_xlabel('Depth (nm)')
+                    ax1.set_ylabel('Hardness (GPa)', color='tab:blue')
+                    ax2.set_ylabel('Modulus (GPa)', color='tab:orange')
+                    ax1.tick_params(axis='y', labelcolor='tab:blue')
+                    ax2.tick_params(axis='y', labelcolor='tab:orange')
+
+                    # Combine legends
+                    lines, labels = [], []
+                    if plotted_hardness:
+                        l1, lab1 = ax1.get_legend_handles_labels()
+                        lines += l1
+                        labels += lab1
+                    if plotted_modulus:
+                        l2, lab2 = ax2.get_legend_handles_labels()
+                        lines += l2
+                        labels += lab2
+                    if lines:
+                        ax1.legend(lines, labels, loc='upper left')
+
+                else:
+                    if plot_hardness and 'HARDNESS_AVG' in df.columns:
+                        plt.plot(df['DEPTH'], df['HARDNESS_AVG'], label='Hardness Avg', color='tab:blue')
+                        if 'STD_HARDNESS' in df.columns:
+                            plt.fill_between(
+                                df['DEPTH'],
+                                df['HARDNESS_AVG'] - df['STD_HARDNESS'],
+                                df['HARDNESS_AVG'] + df['STD_HARDNESS'],
+                                color='tab:blue', alpha=0.15, label='Hardness Std'
+                            )
+
+                    if plot_modulus and 'MODULUS_AVG' in df.columns:
+                        plt.plot(df['DEPTH'], df['MODULUS_AVG'], label='Modulus Avg', color='tab:orange')
+                        if 'STD_MODULUS' in df.columns:
+                            plt.fill_between(
+                                df['DEPTH'],
+                                df['MODULUS_AVG'] - df['STD_MODULUS'],
+                                df['MODULUS_AVG'] + df['STD_MODULUS'],
+                                color='tab:orange', alpha=0.15, label='Modulus Std'
+                            )
+
+                    plt.xlabel('Depth (nm)')
+                    plt.ylabel('Value (GPa)')
+                    plt.legend()
+
+                title = f"Averaged Nanoindentation Curve: {film}_{column}{formatted_row}"
+                if plot_hardness and not plot_modulus:
+                    title += " (Hardness Only)"
+                elif plot_modulus and not plot_hardness:
+                    title += " (Modulus Only)"
+                plt.title(title)
+                plt.grid(True)
+                plt.tight_layout()
+                plt.show()
             return
-    
+
     print(f"File not found: {fname} in {processed_data_dir}")
