@@ -2,13 +2,14 @@
 """
 Created on Sat Apr 26 12:16:44 2025
 
-@author: strei
+@author: Streit
 """
 
 import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
     
 def plot_all_curves(processed_data_dir, plot_hardness=True, plot_modulus=True):
     """
@@ -149,6 +150,107 @@ def plot_all_single_curves(root_dir, film, column, row,
 
     plt.tight_layout()
     plt.show()
+    
+def plot_all_single_stress_strain_curves(root_dir, film, column, row, 
+                                 alpha=0.8, colormap='tab10', figsize=(10, 6)):
+    """
+    Plot all individual stress-strain curves before averaging.
+    
+    Parameters:
+    -----------
+    root_dir : str
+        Root directory containing the data files
+    film : str
+        Film identifier (e.g., 'I', 'II', 'III')
+    column : str
+        Column identifier (e.g., 'A', 'B', 'C')
+    row : int or str
+        Row number
+    alpha : float
+        Transparency of curves (default: 0.8)
+    colormap : str
+        Matplotlib colormap name (default: 'viridis')
+    figsize : tuple
+        Figure size (width, height) in inches
+    """
+    row = str(int(row))  # Format row as two digits
+    location_dir = os.path.join(root_dir, film, column, row)
+    print(f"Searching in: {location_dir}")
+    
+    if not os.path.exists(location_dir):
+        print(f"Directory not found: {location_dir}")
+        return
+
+    # Find all individual curve files (not averaged)
+    files = [f for f in os.listdir(location_dir) 
+             if f.upper().endswith('.CSV') and f.startswith(f'RT_{film}_{column}{row}_')]
+    
+    if not files:
+        print(f"No CSV files found in {location_dir}")
+        return
+    
+    print(f"Found {len(files)} files to plot")
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    colors = plt.get_cmap(colormap)(np.linspace(0, 1, len(files)))
+    all_stress_data = []
+    
+    for idx, fname in enumerate(sorted(files)):
+        fpath = os.path.join(location_dir, fname)
+        try:
+            df = pd.read_csv(fpath)
+            
+            # Look for strain/stress columns with flexible naming
+            strain_col = next((col for col in df.columns if 'STRAIN' in col.upper()), None)
+            stress_col = next((col for col in df.columns if 'STRESS' in col.upper()), None)
+            
+            if not strain_col or not stress_col:
+                print(f"Missing strain/stress columns in {fname}")
+                continue
+            
+            # Convert to numeric and clean data
+            df[strain_col] = pd.to_numeric(df[strain_col], errors='coerce')
+            df[stress_col] = pd.to_numeric(df[stress_col], errors='coerce')
+            df = df.dropna(subset=[strain_col, stress_col])
+            
+            if len(df) == 0:
+                print(f"No valid data in {fname}")
+                continue
+            
+            strain = df[strain_col].values
+            stress = df[stress_col].values * 0.001  # Convert to GPa if in MPa
+            
+            if len(stress) > 0:
+                all_stress_data.extend(stress)
+            
+            label = f"Test {idx+1}"
+            ax.plot(strain, stress, color=colors[idx], alpha=alpha,
+                   linestyle='-', label=label)
+            
+        except Exception as e:
+            print(f"Error processing {fname}: {str(e)}")
+            continue
+    
+    if all_stress_data:
+        s_min = min(all_stress_data)
+        s_max = max(all_stress_data)
+        s_margin = 0.1 * (s_max - s_min)
+        ax.set_ylim(s_min - s_margin, s_max + s_margin)
+    
+    # Set up axes and labels
+    ax.set_xlabel('Strain (%)', fontsize=12)
+    ax.set_ylabel('Stress (GPa)', fontsize=12)
+    ax.set_title(f"Individual Stress-Strain Curves: {film}_{column}{row}", fontsize=14)
+    ax.grid(True, alpha=0.3)
+    
+    # Add legend if we have curves
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, bbox_to_anchor=(1.15, 1), 
+                  loc='upper left', fontsize=9)
+    
+    plt.tight_layout()
+    plt.show()
 
 def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True, plot_modulus=True, plot_stress=False):
     """
@@ -175,7 +277,7 @@ def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True,
                         color='tab:red', alpha=0.18, label='Stress Std'
                     )
                 plt.xlabel('Strain (%)')
-                plt.ylabel('Stress (GPa)')
+                plt.ylabel('Stress (MPa)')
                 plt.title(f"Averaged Stress-Strain Curve: {film}_{column}{formatted_row}")
                 plt.legend()
                 plt.grid(True)
@@ -273,3 +375,238 @@ def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True,
             return
 
     print(f"File not found: {fname} in {processed_data_dir}")
+
+    
+def plot_wafer_stress_strain(processed_data_dir, positions, scale=0.35, region_min=0.3, region_max=0.7):
+    """
+    Plot all stress-strain curves at their respective wafer positions,
+    compressing positions to reduce whitespace and increasing curve size.
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files
+        positions_csv (str): Path to CSV with 'Film', 'X', 'Y' columns
+        scale (float): Size scale of each curve
+        region_min (float): Minimum normalized position for compression
+        region_max (float): Maximum normalized position for compression
+        plot_stress (bool): Whether to plot stress-strain curves
+    """
+    positions_df = pd.read_csv(positions)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.axis('off')
+
+    # Normalize wafer positions
+    x_norm = (positions_df['X'] - positions_df['X'].min()) / (positions_df['X'].max() - positions_df['X'].min())
+    y_norm = (positions_df['Y'] - positions_df['Y'].min()) / (positions_df['Y'].max() - positions_df['Y'].min())
+
+    # Compress wafer positions to central region
+    x_compressed = x_norm * (region_max - region_min) + region_min
+    y_compressed = y_norm * (region_max - region_min) + region_min
+
+    # Fix axes limits
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+
+    for idx, row in positions_df.iterrows():
+        film = str(row['Film'])
+        x_pos = x_compressed.iloc[idx]
+        y_pos = y_compressed.iloc[idx]
+
+        # Find matching data file
+        found_file = None
+        for root, _, files in os.walk(processed_data_dir):
+            for file in files:
+                if file.startswith(film) and file.endswith('_averaged.csv'):
+                    found_file = os.path.join(root, file)
+                    break
+            if found_file:
+                break
+
+        if not found_file:
+            continue
+
+        df = pd.read_csv(found_file)
+        if 'STRAIN' in df.columns and 'STRESS_AVG' in df.columns:
+            strain = df['STRAIN']
+            stress = df['STRESS_AVG']
+            # Normalize curve data
+            strain_norm = (strain - strain.min()) / (strain.max() - strain.min()) - 0.5
+            stress_norm = (stress - stress.min()) / (stress.max() - stress.min()) - 0.5
+            # Center curve at wafer position
+            x_curve = x_pos + strain_norm * scale
+            y_curve = y_pos + stress_norm * scale
+            ax.plot(x_curve, y_curve, color='tab:red', linewidth=1.5)
+            if 'STD_STRESS' in df.columns:
+                std = df['STD_STRESS']
+                std_norm = std / (stress.max() - stress.min()) * scale
+                ax.fill_between(x_curve, y_curve - std_norm, y_curve + std_norm, color='tab:red', alpha=0.18)
+
+    plt.show()
+    
+def plot_wafer_stress_strain_interactive(processed_data_dir, positions, scale=0.35, region_min=0.3, region_max=0.7, use_colormap=True, cmap_name='Viridis'):
+    print("Indexing available data files...")
+    # Build a lookup dict: {film_name: file_path}
+    film_to_file = {}
+    for root, _, files in os.walk(processed_data_dir):
+        for file in files:
+            if file.endswith('_averaged.csv'):
+                film_name = file.split('_averaged.csv')[0]
+                film_to_file[film_name] = os.path.join(root, file)
+    print(f"Indexed {len(film_to_file)} data files.")
+
+    print("Reading wafer positions CSV...")
+    positions_df = pd.read_csv(positions)
+    print(f"Found {len(positions_df)} positions.")
+
+    # Normalize and compress wafer positions
+    x_norm = (positions_df['X'] - positions_df['X'].min()) / (positions_df['X'].max() - positions_df['X'].min())
+    y_norm = (positions_df['Y'] - positions_df['Y'].min()) / (positions_df['Y'].max() - positions_df['Y'].min())
+    x_compressed = x_norm * (region_max - region_min) + region_min
+    y_compressed = y_norm * (region_max - region_min) + region_min
+
+    # Read all data files once and cache
+    print("Reading all data files...")
+    film_to_df = {}
+    all_stress = []
+    for idx, row in positions_df.iterrows():
+        film = str(row['Film'])
+        file_path = film_to_file.get(film)
+        if not file_path or not os.path.exists(file_path):
+            print(f"  [!] File not found for film {film}, skipping.")
+            continue
+        df = pd.read_csv(file_path)
+        film_to_df[film] = df
+        if 'STRESS_AVG' in df.columns:
+            all_stress.extend(df['STRESS_AVG'].dropna().values)
+        else:
+            print(f"  [!] 'STRESS_AVG' column missing in {file_path}, skipping.")
+
+    if all_stress:
+        global_stress_min = min(all_stress)
+        global_stress_max = max(all_stress)
+        print(f"Global stress range: {global_stress_min:.3f} to {global_stress_max:.3f}")
+    else:
+        global_stress_min = 0
+        global_stress_max = 1
+        print("No stress data found. Using default range 0 to 1.")
+
+    fig = go.Figure()
+    print("Plotting curves...")
+    for idx, row in positions_df.iterrows():
+        film = str(row['Film'])
+        x_pos = x_compressed.iloc[idx]
+        y_pos = y_compressed.iloc[idx]
+        df = film_to_df.get(film)
+        if df is None or 'STRAIN' not in df.columns or 'STRESS_AVG' not in df.columns:
+            print(f"  [!] Data missing for film {film}, skipping.")
+            continue
+
+        strain = df['STRAIN'].values
+        stress = df['STRESS_AVG'].values
+        strain_norm = (strain - strain.min()) / (strain.ptp()) - 0.5
+        stress_norm = (stress - stress.min()) / (stress.ptp()) - 0.5
+        x_curve = x_pos + strain_norm * scale
+        y_curve = y_pos + stress_norm * scale
+
+        if use_colormap:
+            # Plot as colored markers (fast), not line gradient
+            #norm_stress = (stress - global_stress_min) / (global_stress_max - global_stress_min)
+            fig.add_trace(go.Scatter(
+                x=x_curve, y=y_curve, mode='lines+markers',
+                marker=dict(color=stress, colorscale=cmap_name, size=6, colorbar=dict(title="Stress (MPa)") if idx==0 else None,
+                            cmin=global_stress_min, cmax=global_stress_max),
+                line=dict(color='rgba(150,150,150,0.3)', width=1),
+                name=film,
+                showlegend=False
+            ))
+            print(f"  [+] Plotted film {film} with colormap.")
+        else:
+            fig.add_trace(go.Scatter(
+                x=x_curve, y=y_curve, mode='lines',
+                line=dict(color='red', width=2),
+                name=film,
+                showlegend=False
+            ))
+            print(f"  [+] Plotted film {film} in red.")
+
+    fig.update_layout(
+        xaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0,1]),
+        yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[0,1]),
+        plot_bgcolor='white',
+        width=800, height=800,
+        title="Wafer Stress-Strain Curves" + (" (Colormap)" if use_colormap else " (Red)")
+    )
+
+    print("Displaying interactive plot...")
+    fig.show()
+    
+def plot_cluster_representatives(processed_data_dir, cluster_file, output_file=None, figsize=(10, 8)):
+    """
+    Create stacked plot of representative curves with separate y-axes for each cluster.
+    
+    Parameters:
+    -----------
+    processed_data_dir : str
+        Directory containing processed CSV files
+    cluster_file : str
+        Path to CSV file with 'film_name' and 'cluster' columns
+    output_file : str (optional)
+        Path to save the plot image
+    figsize : tuple
+        Figure size (width, height) in inches
+    """
+
+    # Load cluster assignments
+    df = pd.read_csv(cluster_file)
+    if not {'film_name', 'cluster'}.issubset(df.columns):
+        raise ValueError("CSV must contain 'film_name' and 'cluster' columns.")
+
+    clusters = sorted(df['cluster'].unique())
+    n_clusters = len(clusters)
+
+    # Create stacked subplots with shared x-axis
+    fig, axes = plt.subplots(n_clusters, 1, sharex=True, figsize=figsize)
+    if n_clusters == 1:
+        axes = [axes]  # Ensure axes is always a list
+
+    plt.suptitle('Stacked Representative Stress-Strain Curves', y=0.98, fontsize=14)
+    colors = plt.cm.viridis_r(np.linspace(0, 1, n_clusters))
+
+    for idx, cluster_label in enumerate(clusters):
+        ax = axes[idx]
+        
+        # Select representative curve
+        cluster_df = df[df['cluster'] == cluster_label]
+        representative = cluster_df.sample(1, random_state=42).iloc[0]
+        film_name = representative['film_name']
+        
+        # Load and plot curve
+        file_path = os.path.join(processed_data_dir, f"{film_name}_averaged.csv")
+        try:
+            curve_data = pd.read_csv(file_path)
+            ax.plot(curve_data['STRAIN'], curve_data['STRESS_AVG'], 
+                   color=colors[idx],
+                   label=f'Cluster {cluster_label} ({film_name})')
+            
+            # Format individual axes
+            ax.set_ylabel('Stress (MPa)', fontsize=10)
+            ax.legend(loc='upper right', frameon=False)
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(left=0)    # Start x-axis at 0
+            ax.set_ylim(bottom=0)  # Start y-axis at 0
+            
+            # Remove top and right spines
+            ax.spines[['right', 'top']].set_visible(False)
+            
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+            continue
+
+    # Common x-axis label
+    axes[-1].set_xlabel('Strain', fontsize=12)
+    
+    # Adjust spacing
+    plt.tight_layout(rect=[0, 0, 1, 0.96])  # Make room for suptitle
+
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {output_file}")
+    plt.show()
