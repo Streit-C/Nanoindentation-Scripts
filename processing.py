@@ -8,6 +8,7 @@ Created on Sat Apr 26 11:20:46 2025
 import os
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import warnings
 from pathlib import Path
 
@@ -78,6 +79,55 @@ def remove_outliers(data_arrays, threshold=3.0):
                     if not is_outlier]
     
     return filtered_data, outlier_mask
+
+def detect_yield(strain, stress):
+    """Improved yield point detection with:
+    - First 10 points skipped
+    - Robust error handling"""
+    yield_strain, yield_stress = 0.0, 0.0
+    try:
+        if len(strain) > 20:  # Minimum valid data length
+            # Skip first 10 points to avoid surface contact noise
+            start_idx = 10
+            valid_strain = strain[start_idx:]
+            valid_stress = stress[start_idx:]
+            
+            # Use next 50 points or 25% of remaining data for elastic fit
+            elastic_pts = min(50, len(valid_strain)//4)
+            if elastic_pts < 5:
+                return 0.0, 0.0
+                
+            # Fit elastic region
+            elastic_fit = np.polyfit(valid_strain[:elastic_pts], 
+                                   valid_stress[:elastic_pts], 1)
+            
+            # 0.2% offset line
+            offset_line = elastic_fit[0] * valid_strain + (elastic_fit[1] - 0.002*elastic_fit[0])
+            
+            # Find yield point in remaining data
+            search_start = elastic_pts
+            residuals = np.abs(valid_stress[search_start:] - offset_line[search_start:])
+            
+            if len(residuals) == 0:
+                return 0.0, 0.0
+                
+            yield_idx = search_start + np.argmin(residuals)
+            yield_idx = min(max(yield_idx, search_start), len(valid_strain)-1)
+            
+            yield_strain = valid_strain[yield_idx]
+            yield_stress = valid_stress[yield_idx]
+            
+            # Cap maximum strain at 10
+            if yield_strain > 10:
+                capped_idx = np.abs(valid_strain - 10).argmin()
+                yield_strain = valid_strain[capped_idx]
+                yield_stress = valid_stress[capped_idx]
+                
+    except Exception as e:
+        print(f"Yield detection error: {str(e)}")
+        return 0.0, 0.0
+        
+    return yield_strain, yield_stress
 
 def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
     """
@@ -227,6 +277,9 @@ def calculate_film_averages(processed_data_dir, output_file="film_mechanical_pro
     depth_range : tuple
         Depth range (min, max) in nm to use for averaging (stable region)
     """
+    import os
+    import pandas as pd
+    import numpy as np
     
     # Initialize results dictionary
     results = {
@@ -465,3 +518,386 @@ def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_
                 result_df.to_csv(output_file, index=False)
 
     write_empty_indents_log(empty_indents, log_empty_path)
+    
+def generate_elbow_plot(processed_data_dir, k_range=(1, 10), standardize=True, 
+                        save_path=None, show_plot=True):
+    """
+    Generate elbow plot for K-means clustering of stress-strain curves.
+    
+    Parameters:
+    -----------
+    processed_data_dir : str
+        Directory containing processed CSV files
+    k_range : tuple
+        Range of K values to test (min, max)
+    standardize : bool
+        Whether to standardize features before clustering
+    save_path : str
+        Optional path to save the elbow plot
+    show_plot : bool
+        Whether to display the plot interactively
+    
+    Returns:
+    --------
+    dict with WCSS values and matplotlib figure object
+    """
+
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+
+    # Collect and align curves (same as clustering function)
+    all_curves = []
+    csv_files = sorted([f for f in os.listdir(processed_data_dir) 
+                       if f.endswith('_averaged.csv')])
+    
+    for filename in csv_files:
+        file_path = os.path.join(processed_data_dir, filename)
+        try:
+            df = pd.read_csv(file_path)
+            strain = df['STRAIN'].values
+            stress = df['STRESS_AVG'].values
+            all_curves.append(np.column_stack((strain, stress)))
+        except Exception as e:
+            print(f"Skipping {filename}: {e}")
+            continue
+
+    # Create aligned dataset
+    common_strain = np.linspace(0, 0.1, 100)
+    X = np.array([np.interp(common_strain, c[:,0], c[:,1]) for c in all_curves])
+    
+    if standardize:
+        X = StandardScaler().fit_transform(X)
+
+    # Calculate WCSS for each K
+    wcss = []
+    k_values = range(k_range[0], k_range[1]+1)
+    
+    for k in k_values:
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        kmeans.fit(X)
+        wcss.append(kmeans.inertia_)
+
+    # Create elbow plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(k_values, wcss, 'bo-', markersize=8)
+    ax.set_title('Elbow Method for Optimal K')
+    ax.set_xlabel('Number of Clusters (K)')
+    ax.set_ylabel('Within-Cluster Sum of Squares (WCSS)')
+    ax.set_xticks(k_values)
+    ax.grid(True, alpha=0.3)
+
+    # Automatic elbow detection (simple gradient method)
+    gradients = np.diff(wcss) / np.diff(k_values)
+    elbow_k = np.argmin(gradients) + k_range[0] + 1
+    ax.axvline(elbow_k, color='r', linestyle='--', 
+              label=f'Suggested K: {elbow_k}')
+    ax.legend()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    if show_plot:
+        plt.show()
+
+    return {'k_values': list(k_values), 'wcss': wcss, 'figure': fig}
+
+def kmeans_clustering(processed_data_dir, n_clusters=3, output_file="film_clusters.csv"):
+    """
+    Perform k-means clustering on stress-strain curves from nanoindentation data,
+    and save the cluster assignments as a CSV file.
+
+    Parameters:
+    -----------
+    processed_data_dir : str
+        Directory containing processed CSV files with stress-strain data
+    n_clusters : int
+        Number of clusters to use for k-means (default=3)
+    output_file : str
+        Path to save the output CSV file with cluster assignments
+
+    Returns:
+    --------
+    pd.DataFrame with Film names and their assigned cluster labels
+    """
+
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+
+    # Collect all stress-strain curves
+    all_curves = []
+    film_names = []
+    csv_files = [f for f in os.listdir(processed_data_dir) 
+                if f.endswith('_averaged.csv')]
+    csv_files.sort()
+
+    for filename in csv_files:
+        film_name = filename.replace('_averaged.csv', '')
+        file_path = os.path.join(processed_data_dir, filename)
+        try:
+            df = pd.read_csv(file_path)
+            # Extract relevant columns
+            strain = df['STRAIN'].values
+            stress = df['STRESS_AVG'].values
+            # Store curve and film name
+            all_curves.append(np.column_stack((strain, stress)))
+            film_names.append(film_name)
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+
+    # Create common strain grid for alignment
+    common_strain = np.linspace(0, 0.1, 100)  # 0-10% strain, 100 points
+    interpolated_stress = []
+    
+    # Interpolate all curves to common strain grid
+    for curve in all_curves:
+        interp_stress = np.interp(common_strain, curve[:, 0], curve[:, 1])
+        interpolated_stress.append(interp_stress)
+
+    # Prepare data matrix for clustering
+    X = np.array(interpolated_stress)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Perform k-means clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    cluster_labels = kmeans.fit_predict(X_scaled)
+
+    # Create DataFrame and save to CSV
+    df_clusters = pd.DataFrame({'Film': film_names, 'Cluster': cluster_labels})
+    df_clusters.to_csv(output_file, index=False)
+    print(f"Cluster assignments saved to {output_file}")
+
+    return df_clusters
+
+def hmm_clustering_with_elbow(processed_data_dir, use_optimal_k=True, n_clusters=3,
+    k_range=(2, 8), n_states=5, output_file="hmm_clusters.csv", elbow_plot_file="hmm_elbow.png", random_state=42):
+    """
+    HMM-based clustering with elbow plot and toggle for optimal/manual K.
+
+    Parameters
+    ----------
+    processed_data_dir : str
+        Directory containing processed CSV files.
+    use_optimal_k : bool
+        If True, use elbow method to select optimal K. If False, use n_clusters.
+    n_clusters : int
+        Number of clusters to use if use_optimal_k is False.
+    k_range : tuple
+        Range of K values to test for elbow (min, max).
+    n_states : int
+        Number of HMM states for each sequence.
+    output_file : str
+        Path to save the cluster assignments.
+    elbow_plot_file : str
+        Path to save the elbow plot.
+    random_state : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    pd.DataFrame with Film names and cluster assignments.
+    """
+
+    from hmmlearn import hmm
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans
+
+    # Step 1: Fit HMMs to each curve and extract parameters
+    film_names = []
+    hmm_params = []
+    csv_files = sorted([f for f in os.listdir(processed_data_dir) if f.endswith('_averaged.csv')])
+
+    for filename in csv_files:
+        film_name = filename.replace('_averaged.csv', '')
+        file_path = os.path.join(processed_data_dir, filename)
+        try:
+            df = pd.read_csv(file_path)
+            strain = df['STRAIN'].values
+            stress = df['STRESS_AVG'].values
+
+            # Normalize stress for discretization
+            stress_norm = (stress - np.min(stress)) / (np.max(stress) - np.min(stress) + 1e-10)
+            n_bins = 20
+            bins = np.linspace(0, 1, n_bins + 1)
+            discretized = np.digitize(stress_norm, bins) - 1
+
+            # Fit HMM
+            model = hmm.MultinomialHMM(n_components=n_states, random_state=random_state)
+            model.fit(discretized.reshape(-1, 1))
+
+            # Extract parameters as feature vector
+            trans_features = model.transmat_.flatten()
+            emis_features = model.emissionprob_.flatten()
+            features = np.concatenate([trans_features, emis_features])
+
+            film_names.append(film_name)
+            hmm_params.append(features)
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+
+    X = np.array(hmm_params)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Step 2: Elbow method to determine optimal K (if requested)
+    wcss = []
+    k_values = range(k_range[0], min(k_range[1]+1, len(X)))
+    for k in k_values:
+        kmeans = KMeans(n_clusters=k, random_state=random_state, n_init=10)
+        kmeans.fit(X_scaled)
+        wcss.append(kmeans.inertia_)
+
+    # Plot elbow
+    plt.figure(figsize=(8, 5))
+    plt.plot(list(k_values), wcss, 'bo-', markersize=8)
+    plt.title('Elbow Method for HMM-based Clustering')
+    plt.xlabel('Number of Clusters (K)')
+    plt.ylabel('Within-Cluster Sum of Squares')
+    plt.xticks(list(k_values))
+    plt.grid(True, alpha=0.3)
+    plt.savefig(elbow_plot_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Elbow plot saved to {elbow_plot_file}")
+
+    # Step 3: Select K
+    if use_optimal_k:
+        gradients = np.diff(wcss)
+        optimal_k = np.argmin(gradients) + k_range[0] + 1
+        print(f"Auto-selected optimal K={optimal_k}")
+        final_k = optimal_k
+    else:
+        print(f"Manual selection: K={n_clusters}")
+        final_k = n_clusters
+
+    # Step 4: Final clustering
+    kmeans = KMeans(n_clusters=final_k, random_state=random_state, n_init=10)
+    cluster_labels = kmeans.fit_predict(X_scaled)
+
+    # Step 5: Save results
+    df_clusters = pd.DataFrame({
+        'Film': film_names,
+        'Cluster': cluster_labels
+    })
+    df_clusters.to_csv(output_file, index=False)
+    print(f"Cluster assignments saved to {output_file}")
+
+    return df_clusters
+
+def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
+    output_file="feature_clusters.csv", export_features_csv=None, show_elbow=True):
+    """
+    Feature-based K-means clustering with elbow plot and manual K selection.
+
+    Parameters
+    ----------
+    processed_data_dir : str
+        Directory containing processed CSV files.
+    n_clusters : int
+        Number of clusters to use for KMeans.
+    k_range : tuple
+        Range of K values for elbow plot (min, max).
+    output_file : str
+        Path to save cluster assignments.
+    export_features_csv : str (optional)
+        Path to save raw features as CSV.
+    show_elbow : bool
+        Whether to display the elbow plot.
+    """
+
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.cluster import KMeans
+    from sklearn.impute import SimpleImputer
+
+    # --- Feature extraction ---
+    features_dict = {
+        'film_name': [],
+        'elastic_slope': [],
+        'yield_strain': [],
+        'yield_stress': [],
+        'hardening_exponent': [],
+        'max_stress': [],
+        'curve_length': []
+    }
+
+    csv_files = sorted([f for f in os.listdir(processed_data_dir) 
+                        if f.endswith('_averaged.csv')])
+
+    for filename in csv_files:
+        film_name = filename.replace('_averaged.csv', '')
+        file_path = os.path.join(processed_data_dir, filename)
+        try:
+            df = pd.read_csv(file_path)
+            strain = df['STRAIN'].values
+            stress = df['STRESS_AVG'].values
+
+            # Elastic slope
+            elastic_pts = min(100, len(strain))
+            if elastic_pts > 1 and np.var(strain[:elastic_pts]) > 1e-10:
+                elastic_slope = np.polyfit(strain[:elastic_pts], stress[:elastic_pts], 1)[0]
+            else:
+                elastic_slope = 0.0
+
+            # Yield point detection
+            yield_strain, yield_stress = detect_yield(strain, stress)
+
+            # Hardening exponent
+            hardening_exp = 0.0
+            plastic_mask = (strain > yield_strain) & (stress > yield_stress)
+            if np.sum(plastic_mask) > 5:
+                strain_plastic = strain[plastic_mask] - yield_strain
+                stress_plastic = stress[plastic_mask] - yield_stress
+                valid = (strain_plastic > 1e-6) & (stress_plastic > 1e-6)
+                if np.sum(valid) > 2:
+                    log_strain = np.log(strain_plastic[valid])
+                    log_stress = np.log(stress_plastic[valid])
+                    if np.var(log_strain) > 1e-10:
+                        hardening_exp = np.polyfit(log_strain, log_stress, 1)[0]
+
+            features_dict['film_name'].append(film_name)
+            features_dict['elastic_slope'].append(float(elastic_slope))
+            features_dict['yield_strain'].append(float(yield_strain))
+            features_dict['yield_stress'].append(float(yield_stress))
+            features_dict['hardening_exponent'].append(float(hardening_exp))
+            features_dict['max_stress'].append(float(np.nanmax(stress)))
+            features_dict['curve_length'].append(float(strain[-1] if len(strain) > 0 else 0))
+
+        except Exception as e:
+            print(f"Skipped {filename} due to error: {str(e)}")
+            continue
+
+    features_df = pd.DataFrame(features_dict)
+    if export_features_csv:
+        features_df.to_csv(export_features_csv, index=False)
+        print(f"Raw features saved to {export_features_csv}")
+
+    # --- Clustering and elbow plot ---
+    X = features_df.drop('film_name', axis=1).values
+    imputer = SimpleImputer(strategy='median')
+    X_imputed = imputer.fit_transform(X)
+    X_scaled = StandardScaler().fit_transform(X_imputed)
+
+    wcss = []
+    k_values = range(k_range[0], k_range[1]+1)
+    for k in k_values:
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        kmeans.fit(X_scaled)
+        wcss.append(kmeans.inertia_)
+
+    if show_elbow:
+        plt.figure(figsize=(8, 5))
+        plt.plot(k_values, wcss, 'bo-', markersize=8)
+        plt.axvline(n_clusters, color='r', linestyle='--', label=f'Selected K: {n_clusters}')
+        plt.title('Elbow Method for Feature-based Clustering')
+        plt.xlabel('Number of Clusters')
+        plt.ylabel('Within-Cluster Sum of Squares (WCSS)')
+        plt.xticks(k_values)
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    # --- Final clustering ---
+    kmeans_final = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    features_df['cluster'] = kmeans_final.fit_predict(X_scaled)
+    features_df.to_csv(output_file, index=False)
+    print(f"Feature-based clustering saved to {output_file}")
+
+    return features_df
