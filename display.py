@@ -397,13 +397,13 @@ def plot_wafer_stress_strain(processed_data_dir, positions, scale=0.35, region_m
     """
     Plot all stress-strain curves at their respective wafer positions,
     compressing positions to reduce whitespace and increasing curve size.
+    
     Args:
         processed_data_dir (str): Directory containing processed CSV files
         positions_csv (str): Path to CSV with 'Film', 'X', 'Y' columns
-        scale (float): Size scale of each curve
-        region_min (float): Minimum normalized position for compression
-        region_max (float): Maximum normalized position for compression
-        plot_stress (bool): Whether to plot stress-strain curves
+        scale (float): Size scale of each curve. (default: 0.35)
+        region_min (float): Minimum normalized position for compression. (default: 0.3)
+        region_max (float): Maximum normalized position for compression. (default: 0.7)
     """
     positions_df = pd.read_csv(positions)
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -457,7 +457,22 @@ def plot_wafer_stress_strain(processed_data_dir, positions, scale=0.35, region_m
 
     plt.show()
     
-def plot_wafer_stress_strain_interactive(processed_data_dir, positions, scale=0.35, region_min=0.3, region_max=0.7, use_colormap=True, cmap_name='Viridis'):
+def plot_wafer_stress_strain_interactive(processed_data_dir, positions, scale=0.35, region_min=0.3, region_max=0.7, 
+                                         use_colormap=True, cmap_name='Viridis'):
+    """
+    Plot all stress-strain curves at their respective wafer positions,
+    compressing positions to reduce whitespace and increasing curve size.
+    This is the interactive version.
+    
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files
+        positions (str): Path to CSV with 'Film', 'X', 'Y' columns
+        scale (float, optional): Size scale of each curve. (default: 0.35)
+        region_min (float): Minimum normalized position for compression. (default: 0.3)
+        region_max (float): Maximum normalized position for compression. (default: 0.7)
+        use_colormap (bool): If True, color curves by stress using a colormap. If False, plot all curves in red. (default: True)
+        cmap_name (str): Name of the Plotly colormap to use for stress coloring. (default: Viridis)
+    """
     print("Indexing available data files...")
     # Build a lookup dict: {film_name: file_path}
     film_to_file = {}
@@ -558,16 +573,11 @@ def plot_cluster_representatives(processed_data_dir, cluster_file, output_file=N
     """
     Create stacked plot of representative curves with separate y-axes for each cluster.
     
-    Parameters:
-    -----------
-    processed_data_dir : str
-        Directory containing processed CSV files
-    cluster_file : str
-        Path to CSV file with 'film_name' and 'cluster' columns
-    output_file : str (optional)
-        Path to save the plot image
-    figsize : tuple
-        Figure size (width, height) in inches
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files
+        cluster_file (str): Path to CSV file with 'film_name' and 'cluster' columns
+        output_file (str): Path to save the plot image. (default: None)
+        figsize (tuple): Figure size (width, height) in inches. (default: (10,8))
     """
 
     # Load cluster assignments
