@@ -2,7 +2,7 @@
 """
 Created on Sat Apr 26 12:18:03 2025
 
-@author: strei
+@author: streit
 """
 
 import os
@@ -40,7 +40,7 @@ def main():
     
     plot_all_curves_stress_strain(processed_directory)
     
-    plot_single_curve(processed_directory, 'IV', 'A', 7 , plot_hardness=False, plot_modulus=False, plot_stress=True)
+    plot_single_curve(processed_directory, 'II', 'B', 11 , plot_hardness=False, plot_modulus=False, plot_stress=True)
     plot_all_single_stress_strain_curves(root_directory, 'IV', 'A', 9, colormap='viridis')
     
     plot_wafer_stress_strain(processed_directory, positions, scale=0.072, region_min=0.05, region_max=0.95)
@@ -50,7 +50,7 @@ def main():
     generate_elbow_plot(processed_directory)
     kmeans_clustering(processed_directory, n_clusters=4)
     
-    feature_kmeans(processed_directory, n_clusters=4, k_range=(1, 10), output_file="feature_clusters.csv", export_features_csv=None, show_elbow=True)
+    feature_kmeans(processed_directory, n_clusters=5, k_range=(1, 10), output_file="feature_clusters.csv", export_features_csv=None, show_elbow=True)
     plot_cluster_representatives(processed_directory, cluster_file, figsize=(10, 14))
 
 if __name__ == "__main__":
