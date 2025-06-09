@@ -569,22 +569,15 @@ def generate_elbow_plot(processed_data_dir, k_range=(1, 10), standardize=True,
     """
     Generate elbow plot for K-means clustering of stress-strain curves.
     
-    Parameters:
-    -----------
-    processed_data_dir : str
-        Directory containing processed CSV files
-    k_range : tuple
-        Range of K values to test (min, max)
-    standardize : bool
-        Whether to standardize features before clustering
-    save_path : str
-        Optional path to save the elbow plot
-    show_plot : bool
-        Whether to display the plot interactively
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files
+        k_range (tuple): Range of K values to test (min, max) (default: (1, 10))
+        standardize (bool): Whether to standardize features before clustering (default: True)
+        save_path (str): Optional path to save the elbow plot (default: None)
+        show_plot (bool): Whether to display the plot interactively (default: True)
     
     Returns:
-    --------
-    dict with WCSS values and matplotlib figure object
+        dict with WCSS values and matplotlib figure object
     """
 
     from sklearn.cluster import KMeans
@@ -650,18 +643,13 @@ def kmeans_clustering(processed_data_dir, n_clusters=3, output_file="film_cluste
     Perform k-means clustering on stress-strain curves from nanoindentation data,
     and save the cluster assignments as a CSV file.
 
-    Parameters:
-    -----------
-    processed_data_dir : str
-        Directory containing processed CSV files with stress-strain data
-    n_clusters : int
-        Number of clusters to use for k-means (default=3)
-    output_file : str
-        Path to save the output CSV file with cluster assignments
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files with stress-strain data
+        n_clusters (int): Number of clusters to use for k-means (default = 3)
+        output_file (str): Path to save the output CSV file with cluster assignments (default = "film_clusters.csv")
 
     Returns:
-    --------
-    pd.DataFrame with Film names and their assigned cluster labels
+        pd.DataFrame with Film names and their assigned cluster labels
     """
 
     from sklearn.cluster import KMeans
@@ -714,33 +702,22 @@ def kmeans_clustering(processed_data_dir, n_clusters=3, output_file="film_cluste
     return df_clusters
 
 def hmm_clustering_with_elbow(processed_data_dir, use_optimal_k=True, n_clusters=3,
-    k_range=(2, 8), n_states=5, output_file="hmm_clusters.csv", elbow_plot_file="hmm_elbow.png", random_state=42
-):
+    k_range=(2, 8), n_states=5, output_file="hmm_clusters.csv", elbow_plot_file="hmm_elbow.png", random_state=42):
     """
     HMM-based clustering with elbow plot and toggle for optimal/manual K.
 
-    Parameters
-    ----------
-    processed_data_dir : str
-        Directory containing processed CSV files.
-    use_optimal_k : bool
-        If True, use elbow method to select optimal K. If False, use n_clusters.
-    n_clusters : int
-        Number of clusters to use if use_optimal_k is False.
-    k_range : tuple
-        Range of K values to test for elbow (min, max).
-    n_states : int
-        Number of HMM states for each sequence.
-    output_file : str
-        Path to save the cluster assignments.
-    elbow_plot_file : str
-        Path to save the elbow plot.
-    random_state : int
-        Random seed for reproducibility.
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files.
+        use_optimal_k (bool): If True, use elbow method to select optimal K. If False, use n_clusters. (default = True)
+        n_clusters (int): Number of clusters to use if use_optimal_k is False. (default = 3)
+        k_range (tuple): Range of K values to test for elbow (min, max). (default = (2,8))
+        n_states (int): Number of HMM states for each sequence. (default = 5)
+        output_file (str): Path to save the cluster assignments. (default = "hmm_clusters.csv")
+        elbow_plot_file (str): Path to save the elbow plot. (default = "hmm_elbow.png")
+        random_state (int): Random seed for reproducibility. (default = 42)
 
-    Returns
-    -------
-    pd.DataFrame with Film names and cluster assignments.
+    Returns:
+        pd.DataFrame with Film names and cluster assignments.
     """
 
     from hmmlearn import hmm
@@ -833,20 +810,14 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
     """
     Feature-based K-means clustering with elbow plot and manual K selection.
 
-    Parameters
-    ----------
-    processed_data_dir : str
-        Directory containing processed CSV files.
-    n_clusters : int
-        Number of clusters to use for KMeans.
-    k_range : tuple
-        Range of K values for elbow plot (min, max).
-    output_file : str
-        Path to save cluster assignments.
-    export_features_csv : str (optional)
-        Path to save raw features as CSV.
-    show_elbow : bool
-        Whether to display the elbow plot.
+    Args:
+        processed_data_dir (str): Directory containing processed CSV files.
+        n_clusters (int): Number of clusters to use for KMeans. (default = 3)
+        k_range (tuple): Range of K values for elbow plot (min, max). (default = (1,10))
+        output_file (str): Path to save cluster assignments. (default = "feature_clusters.csv")
+        export_features_csv (str): Path to save raw features as CSV. (default = None)
+        show_elbow (bool): Whether to display the elbow plot. (default = True)
+        plot_representatives (bool): Whether to display the most representative curves for each centroid. (default = True)
     """
 
     from sklearn.preprocessing import StandardScaler
