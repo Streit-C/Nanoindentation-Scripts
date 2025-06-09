@@ -2,7 +2,7 @@
 """
 Created on Sat Apr 26 12:16:44 2025
 
-@author: Streit
+@author: streit
 """
 
 import os
@@ -606,6 +606,69 @@ def plot_cluster_representatives(processed_data_dir, cluster_file, output_file=N
     # Adjust spacing
     plt.tight_layout(rect=[0, 0, 1, 0.96])  # Make room for suptitle
 
+    if output_file:
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {output_file}")
+    plt.show()
+    
+def plot_cluster_representatives_center(processed_data_dir, features_df, X_scaled, n_clusters, output_file=None, figsize=(10, 8)):
+    """
+    Plot the representative (center-most) curve for each cluster,
+    with shared x-axis set to the largest strain value among all representatives.
+    """
+    import os
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from sklearn.metrics import pairwise_distances_argmin_min
+
+    clusters = sorted(features_df['cluster'].unique())
+    centers = []
+    for k in clusters:
+        cluster_indices = np.where(features_df['cluster'] == k)[0]
+        cluster_points = X_scaled[cluster_indices]
+        centroid = cluster_points.mean(axis=0)
+        centers.append(centroid)
+    centers = np.vstack(centers)
+
+    # Find representatives
+    representative_indices, _ = pairwise_distances_argmin_min(centers, X_scaled)
+    representative_df = features_df.iloc[representative_indices]
+
+    # Find max strain across all representatives
+    max_strain = 0
+    curve_data_list = []
+    for row in representative_df.itertuples():
+        film_name = row.film_name
+        file_path = os.path.join(processed_data_dir, f"{film_name}_averaged.csv")
+        try:
+            curve_data = pd.read_csv(file_path)
+            curve_data_list.append((curve_data, row.cluster, film_name))
+            max_strain = max(max_strain, curve_data['STRAIN'].max())
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+            continue
+
+    # Plot
+    fig, axes = plt.subplots(n_clusters, 1, sharex=True, figsize=figsize)
+    if n_clusters == 1:
+        axes = [axes]
+    plt.suptitle('Cluster Center Representative Stress-Strain Curves', y=0.98, fontsize=14)
+    colors = plt.cm.viridis_r(np.linspace(0, 1, n_clusters))
+
+    for idx, (ax, (curve_data, cluster_label, film_name)) in enumerate(zip(axes, curve_data_list)):
+        ax.plot(curve_data['STRAIN'], curve_data['STRESS_AVG'],
+                color=colors[idx],
+                label=f'Cluster {cluster_label} ({film_name})')
+        ax.set_ylabel('Stress (MPa)', fontsize=10)
+        ax.legend(loc='upper right', frameon=False)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(left=0, right=max_strain)
+        ax.set_ylim(bottom=0)
+        ax.spines[['right', 'top']].set_visible(False)
+
+    axes[-1].set_xlabel('Strain', fontsize=12)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         print(f"Plot saved to {output_file}")
