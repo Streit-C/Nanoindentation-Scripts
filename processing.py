@@ -179,7 +179,8 @@ def detect_inflection(strain, stress, yield_strain,
                         return strain[idx_curr]
     return np.nan
 
-def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
+def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", 
+                                 remove_outliers_flag=False, outlier_threshold=3.0):
     """
     Process all nanoindentation data with optional outlier removal.
     
@@ -413,7 +414,8 @@ def load_and_validate_stress_strain(file_path):
         print(f"  [ERROR] Skipping {os.path.basename(file_path)}: {str(e)}")
         return None
 
-def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0, max_strain=None):
+def process_stress_strain_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", 
+                               remove_outliers_flag=False, outlier_threshold=3.0, max_strain=None):
     """
     Process all nanoindentation data with optional outlier removal and strain cutoff.
 
