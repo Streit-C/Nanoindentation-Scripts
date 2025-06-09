@@ -80,54 +80,104 @@ def remove_outliers(data_arrays, threshold=3.0):
     
     return filtered_data, outlier_mask
 
-def detect_yield(strain, stress):
-    """Improved yield point detection with:
-    - First 10 points skipped
-    - Robust error handling"""
-    yield_strain, yield_stress = 0.0, 0.0
+def detect_yield(strain, stress, elastic_end=0.02, window=51, polyorder=3):
+    """
+    Detect yield as the point of maximum curvature (second derivative)
+    after the initial elastic region.
+    """
+    
+    from scipy.signal import savgol_filter
+    
     try:
-        if len(strain) > 20:  # Minimum valid data length
-            # Skip first 10 points to avoid surface contact noise
-            start_idx = 10
-            valid_strain = strain[start_idx:]
-            valid_stress = stress[start_idx:]
-            
-            # Use next 50 points or 25% of remaining data for elastic fit
-            elastic_pts = min(50, len(valid_strain)//4)
-            if elastic_pts < 5:
-                return 0.0, 0.0
-                
-            # Fit elastic region
-            elastic_fit = np.polyfit(valid_strain[:elastic_pts], 
-                                   valid_stress[:elastic_pts], 1)
-            
-            # 0.2% offset line
-            offset_line = elastic_fit[0] * valid_strain + (elastic_fit[1] - 0.002*elastic_fit[0])
-            
-            # Find yield point in remaining data
-            search_start = elastic_pts
-            residuals = np.abs(valid_stress[search_start:] - offset_line[search_start:])
-            
-            if len(residuals) == 0:
-                return 0.0, 0.0
-                
-            yield_idx = search_start + np.argmin(residuals)
-            yield_idx = min(max(yield_idx, search_start), len(valid_strain)-1)
-            
-            yield_strain = valid_strain[yield_idx]
-            yield_stress = valid_stress[yield_idx]
-            
-            # Cap maximum strain at 10
-            if yield_strain > 10:
-                capped_idx = np.abs(valid_strain - 10).argmin()
-                yield_strain = valid_strain[capped_idx]
-                yield_stress = valid_stress[capped_idx]
-                
+        # Smooth the stress-strain curve to reduce noise
+        stress_smooth = savgol_filter(stress, window, polyorder)
+        # Compute second derivative (curvature)
+        d2y = np.gradient(np.gradient(stress_smooth, strain), strain)
+        # Only consider points after the elastic region
+        mask = strain > elastic_end
+        if not np.any(mask):
+            return np.nan, np.nan
+        idx = np.argmax(np.abs(d2y[mask]))
+        idx_global = np.where(mask)[0][idx]
+        return strain[idx_global], stress[idx_global]
     except Exception as e:
-        print(f"Yield detection error: {str(e)}")
-        return 0.0, 0.0
-        
-    return yield_strain, yield_stress
+        print(f"Max curvature yield detection failed: {str(e)}")
+        return np.nan, np.nan
+
+def detect_inflection(strain, stress, yield_strain,
+                      window=51, polyorder=3, 
+                      yield_buffer=1.5,
+                      plateau_detection_window=0.03,  # 3% strain window for plateau detection
+                      min_plateau_slope=0.2,          # Stricter: must be flatter
+                      min_plateau_length=0.02,        # Minimum plateau length
+                      min_hardening_slope_ratio=1.5,  # Slope must increase by 50%
+                      validation_window=0.025):       # 2.5% strain for post-inflection validation
+    """
+    S-curve inflection detection with balanced false positive/negative rate.
+    Returns np.nan for monotonic curves with no plateau or late hardening.
+    """
+    from scipy.signal import savgol_filter
+    import numpy as np
+
+    if len(stress) < 100 or yield_strain is None or yield_strain <= 0:
+        return np.nan
+
+    stress_smoothed = savgol_filter(stress, window, polyorder)
+    dy = np.gradient(stress_smoothed, strain)
+
+    # Search region: post-yield, not too close to end
+    search_start = max(yield_strain * yield_buffer, np.percentile(strain, 30))
+    search_end = np.percentile(strain, 90)
+    search_mask = (strain >= search_start) & (strain <= search_end)
+    if not np.any(search_mask):
+        return np.nan
+
+    search_indices = np.where(search_mask)[0]
+
+    # Find plateau regions
+    plateau_candidates = []
+    stress_range = np.ptp(stress_smoothed)
+    strain_range = np.ptp(strain)
+    for i in range(len(search_indices) - 10):
+        idx = search_indices[i]
+        window_end = strain[idx] + plateau_detection_window
+        window_mask = (strain >= strain[idx]) & (strain <= window_end)
+        if not np.any(window_mask):
+            continue
+        window_slopes = dy[window_mask]
+        avg_slope = np.mean(window_slopes)
+        slope_std = np.std(window_slopes)
+        normalized_slope = abs(avg_slope) / (stress_range / strain_range)
+        # Require a flat region (plateau) with low slope and low variability
+        if normalized_slope < min_plateau_slope and slope_std < 0.5 * abs(avg_slope) and len(window_slopes) > int(min_plateau_length / (strain[1] - strain[0])):
+            plateau_candidates.append((strain[idx], avg_slope))
+
+    if not plateau_candidates:
+        return np.nan  # No plateau, no S-curve inflection
+
+    # Look for significant slope increase after the plateau
+    for plateau_strain, plateau_slope in plateau_candidates:
+        post_plateau_mask = strain > plateau_strain + min_plateau_length
+        post_indices = np.where(post_plateau_mask)[0]
+        for idx_curr in post_indices:
+            # Pre and post windows for slope comparison
+            pre_window = slice(max(0, idx_curr-10), idx_curr)
+            post_window = slice(idx_curr, min(len(dy), idx_curr+15))
+            if len(dy[pre_window]) < 5 or len(dy[post_window]) < 5:
+                continue
+            pre_slope = np.mean(dy[pre_window])
+            post_slope = np.mean(dy[post_window])
+            # Require significant and sustained slope increase
+            if (post_slope > pre_slope * min_hardening_slope_ratio and
+                post_slope > plateau_slope * min_hardening_slope_ratio):
+                # Validate sustained hardening
+                validation_mask = ((strain >= strain[idx_curr]) & 
+                                   (strain <= strain[idx_curr] + validation_window))
+                if np.any(validation_mask):
+                    validation_slopes = dy[validation_mask]
+                    if np.mean(validation_slopes) > pre_slope * 1.2:
+                        return strain[idx_curr]
+    return np.nan
 
 def process_nanoindentation_data(root_dir, output_dir="Processed_Data", log_empty_path="empty_indents_log.txt", remove_outliers_flag=False, outlier_threshold=3.0):
     """
@@ -669,7 +719,8 @@ def kmeans_clustering(processed_data_dir, n_clusters=3, output_file="film_cluste
     return df_clusters
 
 def hmm_clustering_with_elbow(processed_data_dir, use_optimal_k=True, n_clusters=3,
-    k_range=(2, 8), n_states=5, output_file="hmm_clusters.csv", elbow_plot_file="hmm_elbow.png", random_state=42):
+    k_range=(2, 8), n_states=5, output_file="hmm_clusters.csv", elbow_plot_file="hmm_elbow.png", random_state=42
+):
     """
     HMM-based clustering with elbow plot and toggle for optimal/manual K.
 
@@ -783,7 +834,7 @@ def hmm_clustering_with_elbow(processed_data_dir, use_optimal_k=True, n_clusters
     return df_clusters
 
 def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
-    output_file="feature_clusters.csv", export_features_csv=None, show_elbow=True):
+    output_file="feature_clusters.csv", export_features_csv=None, show_elbow=True, plot_representatives=True):
     """
     Feature-based K-means clustering with elbow plot and manual K selection.
 
@@ -806,6 +857,7 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
     from sklearn.preprocessing import StandardScaler
     from sklearn.cluster import KMeans
     from sklearn.impute import SimpleImputer
+    from display import plot_cluster_representatives_center
 
     # --- Feature extraction ---
     features_dict = {
@@ -813,6 +865,7 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
         'elastic_slope': [],
         'yield_strain': [],
         'yield_stress': [],
+        'inflection_strain': [],
         'hardening_exponent': [],
         'max_stress': [],
         'curve_length': []
@@ -838,6 +891,9 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
 
             # Yield point detection
             yield_strain, yield_stress = detect_yield(strain, stress)
+            
+            # Inflection detection (pass yield_strain directly)
+            inflection_strain = detect_inflection(strain, stress, yield_strain, window=71)
 
             # Hardening exponent
             hardening_exp = 0.0
@@ -856,6 +912,7 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
             features_dict['elastic_slope'].append(float(elastic_slope))
             features_dict['yield_strain'].append(float(yield_strain))
             features_dict['yield_stress'].append(float(yield_stress))
+            features_dict['inflection_strain'].append(float(inflection_strain))
             features_dict['hardening_exponent'].append(float(hardening_exp))
             features_dict['max_stress'].append(float(np.nanmax(stress)))
             features_dict['curve_length'].append(float(strain[-1] if len(strain) > 0 else 0))
@@ -899,5 +956,9 @@ def feature_kmeans(processed_data_dir, n_clusters=3, k_range=(1, 10),
     features_df['cluster'] = kmeans_final.fit_predict(X_scaled)
     features_df.to_csv(output_file, index=False)
     print(f"Feature-based clustering saved to {output_file}")
+    
+    if plot_representatives:
+        plot_cluster_representatives_center(processed_data_dir, features_df, X_scaled, n_clusters, figsize=(10,14))
 
     return features_df
+
