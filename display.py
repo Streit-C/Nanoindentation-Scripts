@@ -68,15 +68,15 @@ def plot_all_single_curves(root_dir, film, column, row,
     Plot all individual nanoindentation curves with correct scaling and dual y-axis support.
 
     Args:
-        root_dir (str): Root directory containing film data organized in column/row subdirectories
-        film (str): Name of the film/sample being analyzed
-        column (str): Column identifier (e.g., "A", "B")
-        row (int): Row number (will be converted to string for path construction)
-        plot_hardness (bool, optional): Whether to plot hardness curves. Defaults to True
-        plot_modulus (bool, optional): Whether to plot modulus curves. Defaults to True
-        alpha (float, optional): Transparency of plotted lines (0-1). Defaults to 0.8
-        colormap (str, optional): Matplotlib colormap name for differentiating indents. Defaults to 'tab10'
-        figsize (tuple, optional): Figure dimensions (width, height) in inches. Defaults to (10, 6)
+        root_dir (str): Root directory containing the data files
+        film (str): Film identifier (e.g., 'I', 'II', 'III')
+        column (str): Column identifier (e.g., 'A', 'B', 'C')
+        row (int or str): Row number
+        plot_hardness (bool): Whether to plot hardness curves. (default: True)
+        plot_modulus (bool): Whether to plot modulus curves. (default: True)
+        alpha (float): Transparency of curves (default: 0.8)
+        colormap (str): Matplotlib colormap name (default: 'viridis')
+        figsize (tuple): Figure size (width, height) in inches
     """
     row = str(int(row))
     location_dir = os.path.join(root_dir, film, column, row)
@@ -167,22 +167,14 @@ def plot_all_single_stress_strain_curves(root_dir, film, column, row,
     """
     Plot all individual stress-strain curves before averaging.
     
-    Parameters:
-    -----------
-    root_dir : str
-        Root directory containing the data files
-    film : str
-        Film identifier (e.g., 'I', 'II', 'III')
-    column : str
-        Column identifier (e.g., 'A', 'B', 'C')
-    row : int or str
-        Row number
-    alpha : float
-        Transparency of curves (default: 0.8)
-    colormap : str
-        Matplotlib colormap name (default: 'viridis')
-    figsize : tuple
-        Figure size (width, height) in inches
+    Args:
+        root_dir (str): Root directory containing the data files
+        film (str): Film identifier (e.g., 'I', 'II', 'III')
+        column (str): Column identifier (e.g., 'A', 'B', 'C')
+        row (int or str): Row number
+        alpha (float): Transparency of curves (default: 0.8)
+        colormap (str): Matplotlib colormap name (default: 'viridis')
+        figsize (tuple): Figure size (width, height) in inches
     """
     row = str(int(row))  # Format row as two digits
     location_dir = os.path.join(root_dir, film, column, row)
@@ -266,7 +258,15 @@ def plot_all_single_stress_strain_curves(root_dir, film, column, row,
 def plot_single_curve(processed_data_dir, film, column, row, plot_hardness=True, plot_modulus=True, plot_stress=False):
     """
     Plot a single processed curve (choose hardness, modulus, stress, or any combination).
-    Example: plot_single_curve('Processed_Data', 'III', 'A', 2, plot_hardness=True, plot_modulus=False, plot_stress=True)
+    
+    Args:
+        root_dir (str): Root directory containing the data files
+        film (str): Film identifier (e.g., 'I', 'II', 'III')
+        column (str): Column identifier (e.g., 'A', 'B', 'C')
+        row (int or str): Row number
+        plot_hardness (bool): Whether to plot hardness curve. (default: True)
+        plot_modulus (bool): Whether to plot modulus curve. (default: True)
+        plot_stress (bool): Whether to plot stress-strain curve. (default: False)
     """
     formatted_row = f"{int(row):02d}"
     fname = f"{film}_{column}{formatted_row}_averaged.csv"
