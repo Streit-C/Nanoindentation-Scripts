@@ -15,6 +15,11 @@ def plot_all_curves(processed_data_dir, plot_hardness=True, plot_modulus=True):
     """
     Plot all processed curves (HARDNESS_AVG and/or MODULUS_AVG) from every *_averaged.csv
     in the processed data directory and its subdirectories.
+
+    Args:
+        root_dir (str): Root directory containing the data files
+        plot_hardness (bool): Whether to plot hardness curve. (default: True)
+        plot_modulus (bool): Whether to plot modulus curve. (default: True)
     """
     plt.figure(figsize=(12, 7))
     for root, _, files in os.walk(processed_data_dir):
