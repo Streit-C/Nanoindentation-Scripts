@@ -319,18 +319,11 @@ def calculate_film_averages(processed_data_dir, output_file="film_mechanical_pro
     Calculate average hardness and modulus values for each film from processed CSV files.
     Each CSV in the processed folder is treated as a separate film.
     
-    Parameters:
-    -----------
-    processed_data_dir : str
-        Directory containing processed nanoindentation CSV files
-    output_file : str
-        Path to save the output CSV file with film averages
-    depth_range : tuple
-        Depth range (min, max) in nm to use for averaging (stable region)
+    Args:
+        processed_data_dir (str): Directory containing processed nanoindentation CSV files
+        output_file (str): Path to save the output CSV file with film averages
+        depth_range (tuple) Depth range (min, max) in nm to use for averaging (stable region)
     """
-    import os
-    import pandas as pd
-    import numpy as np
     
     # Initialize results dictionary
     results = {
