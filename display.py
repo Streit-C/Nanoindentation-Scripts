@@ -66,6 +66,17 @@ def plot_all_single_curves(root_dir, film, column, row,
                                 alpha=0.8, colormap='tab10', figsize=(10, 6)):
     """
     Plot all individual nanoindentation curves with correct scaling and dual y-axis support.
+
+    Args:
+        root_dir (str): Root directory containing film data organized in column/row subdirectories
+        film (str): Name of the film/sample being analyzed
+        column (str): Column identifier (e.g., "A", "B")
+        row (int): Row number (will be converted to string for path construction)
+        plot_hardness (bool, optional): Whether to plot hardness curves. Defaults to True
+        plot_modulus (bool, optional): Whether to plot modulus curves. Defaults to True
+        alpha (float, optional): Transparency of plotted lines (0-1). Defaults to 0.8
+        colormap (str, optional): Matplotlib colormap name for differentiating indents. Defaults to 'tab10'
+        figsize (tuple, optional): Figure dimensions (width, height) in inches. Defaults to (10, 6)
     """
     row = str(int(row))
     location_dir = os.path.join(root_dir, film, column, row)
